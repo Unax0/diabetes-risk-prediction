@@ -87,3 +87,26 @@ YES: Final[str] = "Да"
 NO: Final[str] = "Нет"
 MALE: Final[str] = "Мужчина"
 FEMALE: Final[str] = "Женщина"
+
+# --- Russian display names for the 16 model features ------------------------
+# Used by SHAP plots and the top-factors summary so users see human-readable
+# names instead of the raw column names.
+
+FEATURE_LABELS_RU: Final[dict[str, str]] = {
+    "HighBP": "Повышенное давление",
+    "HighChol": "Повышенный холестерин",
+    "BMI": "Индекс массы тела",
+    "Smoker": "Курение",
+    "Stroke": "Инсульт в анамнезе",
+    "HeartDiseaseorAttack": "Болезни сердца / инфаркт",
+    "PhysActivity": "Физическая активность",
+    "Fruits": "Потребление фруктов",
+    "Veggies": "Потребление овощей",
+    "HvyAlcoholConsump": "Чрезмерное употребление алкоголя",
+    "GenHlth": "Общее состояние здоровья",
+    "MentHlth": "Плохое психическое состояние (дни)",
+    "PhysHlth": "Плохое физическое состояние (дни)",
+    "DiffWalk": "Трудности при ходьбе",
+    "Sex": "Пол",
+    "Age": "Возрастная группа",
+}

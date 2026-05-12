@@ -3,12 +3,28 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import streamlit as st
 
 from .. import ui
 from ..components import disclaimer, hero, result_banner, section_header
 from ..features import age_to_bucket, build_feature_vector, calculate_bmi
 from ..model import predict_risk
+
+# shap, matplotlib, and src.explain are imported lazily inside
+# `_explanation_section` so the app still starts when those (optional, heavy)
+# packages are not yet installed.
+
+
+@st.cache_resource
+def _get_explainer(_model: Any) -> Any:
+    """Build a SHAP TreeExplainer once per session.
+
+    The leading underscore on `_model` tells Streamlit's cache machinery to
+    skip hashing the (large, unhashable) model object.
+    """
+    from .. import explain  # lazy: avoid importing shap at module load
+    return explain.build_explainer(_model)
 
 
 def _demographics_section(inputs: dict[str, float]) -> None:
@@ -88,6 +104,72 @@ def _wellbeing_section(inputs: dict[str, float]) -> None:
             )
 
 
+def _explanation_section(model: Any, features: np.ndarray) -> None:
+    """Render SHAP-based explanation of the prediction."""
+    section_header(
+        "🔍 Объяснение результата",
+        "Какие признаки больше всего повлияли на оценку. Положительные значения "
+        "увеличивают риск, отрицательные — снижают его.",
+    )
+
+    # Lazy imports — keep the rest of the app working if these aren't installed.
+    try:
+        import matplotlib.pyplot as plt
+        import shap
+        from .. import explain
+    except ImportError as e:
+        st.info(
+            "Для отображения SHAP-объяснений установите дополнительные пакеты:\n\n"
+            "```bash\npip install -r requirements.txt\n```\n\n"
+            f"Отсутствует модуль: `{e.name}`"
+        )
+        return
+
+    try:
+        explainer = _get_explainer(model)
+        explanation = explain.explain_single(explainer, features)
+    except Exception as e:  # noqa: BLE001 — surface to user, don't crash the page
+        st.warning(f"Не удалось построить SHAP-объяснение: {e}")
+        return
+
+    # --- Text summary: top factors on each side ---
+    positives, negatives = explain.top_factors(explanation, n=3)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**🔺 Увеличивают риск:**")
+        if positives:
+            for name, val in positives:
+                st.markdown(f"- {name} &nbsp;`+{val:.3f}`")
+        else:
+            st.caption("Нет факторов, повышающих риск.")
+    with col2:
+        st.markdown("**🔻 Снижают риск:**")
+        if negatives:
+            for name, val in negatives:
+                st.markdown(f"- {name} &nbsp;`{val:.3f}`")
+        else:
+            st.caption("Нет факторов, снижающих риск.")
+
+    # --- Waterfall plot: full breakdown from base value to prediction ---
+    with st.expander("Подробная диаграмма вкладов (waterfall)", expanded=True):
+        fig = plt.figure(figsize=(9, 6))
+        shap.plots.waterfall(explanation, show=False, max_display=12)
+        st.pyplot(plt.gcf(), use_container_width=True, clear_figure=True)
+        plt.close("all")
+
+    # --- Bar plot: absolute magnitude of each feature's contribution ---
+    with st.expander("Величина вклада признаков (bar)"):
+        fig = plt.figure(figsize=(9, 5))
+        shap.plots.bar(explanation, show=False, max_display=12)
+        st.pyplot(plt.gcf(), use_container_width=True, clear_figure=True)
+        plt.close("all")
+
+    st.caption(
+        "SHAP-значения показывают вклад каждого признака в отклонение прогноза "
+        "от среднего по обучающей выборке. Это объяснение модели, а не медицинская оценка."
+    )
+
+
 def _result_section(model: Any, inputs: dict[str, float]) -> None:
     section_header("Результат")
     features = build_feature_vector(inputs)
@@ -95,6 +177,8 @@ def _result_section(model: Any, inputs: dict[str, float]) -> None:
 
     result_banner(probability, is_high_risk)
     st.progress(min(probability, 1.0))
+
+    _explanation_section(model, features)
 
     col1, col2, _ = st.columns([1, 1, 2])
     with col1:
