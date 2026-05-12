@@ -1,142 +1,74 @@
+"""Streamlit entrypoint for the diabetes risk prediction app.
+
+Run with:
+    streamlit run app.py
+
+Heavy lifting (feature engineering, model I/O) lives in `src/`.
+This file only wires widgets to those helpers and renders the result.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import streamlit as st
-import joblib
-import numpy as np
 
-# Загрузка модели (обученной без удалённых фичей)
-model = joblib.load("xgb_model_reduced.pkl")
+from src import ui
+from src.features import age_to_bucket, build_feature_vector, calculate_bmi
+from src.model import load_model, predict_risk
 
-st.title("Опросник: Прогноз риска диабета")
 
-st.subheader("Ответьте на вопросы")
+@st.cache_resource
+def get_model() -> Any:
+    """Load the model once per Streamlit session."""
+    return load_model()
 
-# Ввод возраста
-age_input = st.number_input("Введите ваш возраст", min_value=0, max_value=150, value=18)
 
-# Преобразование возраста в категорию и отображение диапазона
-if 18 <= age_input <= 24:
-    Age = 1
-    age_range = "18-24 лет"
-elif 25 <= age_input <= 29:
-    Age = 2
-    age_range = "25-29 лет"
-elif 30 <= age_input <= 34:
-    Age = 3
-    age_range = "30-34 лет"
-elif 35 <= age_input <= 39:
-    Age = 4
-    age_range = "35-39 лет"
-elif 40 <= age_input <= 44:
-    Age = 5
-    age_range = "40-44 лет"
-elif 45 <= age_input <= 49:
-    Age = 6
-    age_range = "45-49 лет"
-elif 50 <= age_input <= 54:
-    Age = 7
-    age_range = "50-54 лет"
-elif 55 <= age_input <= 59:
-    Age = 8
-    age_range = "55-59 лет"
-elif 60 <= age_input <= 64:
-    Age = 9
-    age_range = "60-64 лет"
-elif 65 <= age_input <= 69:
-    Age = 10
-    age_range = "65-69 лет"
-elif 70 <= age_input <= 74:
-    Age = 11
-    age_range = "70-74 лет"
-elif 75 <= age_input <= 79:
-    Age = 12
-    age_range = "75-79 лет"
-else:
-    Age = 13
-    age_range = "80+ лет"
+def main() -> None:
+    model = get_model()
 
-# Отображение диапазона на сайте
-st.write(f"Ваш возраст попадает в диапазон: {age_range}")
+    st.title("Опросник: Прогноз риска диабета")
+    st.subheader("Ответьте на вопросы")
 
-# Ввод роста (в см)
-height = st.number_input("Введите ваш рост (в см)", min_value=50, max_value=250, value=170)
+    age_raw = ui.age_input("Введите ваш возраст")
+    age_bucket, age_range = age_to_bucket(age_raw)
+    st.write(f"Ваш возраст попадает в диапазон: {age_range}")
 
-# Ввод веса (в кг)
-weight = st.number_input("Введите ваш вес (в кг)", min_value=10, max_value=300, value=70)
+    height = ui.height_input("Введите ваш рост (в см)")
+    weight = ui.weight_input("Введите ваш вес (в кг)")
+    bmi = calculate_bmi(height, weight)
+    st.write(f"Ваш индекс массы тела (BMI): {bmi:.2f}")
 
-# Преобразование роста и веса в индекс массы тела (BMI)
-BMI = weight / ((height / 100) ** 2)
+    # Order of dict insertion preserves widget render order — keep this
+    # identical to the original app.py question sequence.
+    inputs: dict[str, float] = {
+        "HighBP": ui.yes_no_input("Есть ли повышенное давление?"),
+        "HighChol": ui.yes_no_input("Есть ли повышенный холестерин?"),
+        "BMI": bmi,
+        "Smoker": ui.yes_no_input("Курили ли вы более 100 сигарет за жизнь?"),
+        "Stroke": ui.yes_no_input("Был ли инсульт?"),
+        "HeartDiseaseorAttack": ui.yes_no_input("Были ли болезни сердца / инфаркт?"),
+        "PhysActivity": ui.yes_no_input("Была ли физическая активность за последние 30 дней?"),
+        "Fruits": ui.yes_no_input("Употребляете ли фрукты регулярно?"),
+        "Veggies": ui.yes_no_input("Употребляете ли овощи регулярно?"),
+        "HvyAlcoholConsump": ui.yes_no_input("Чрезмерное употребление алкоголя?"),
+        "GenHlth": ui.gen_health_input("Общее состояние здоровья (1 = отличное, 5 = плохое)"),
+        "MentHlth": ui.days_input("Дней плохого психического состояния за 30 дней"),
+        "PhysHlth": ui.days_input("Дней плохого физического состояния за 30 дней"),
+        "DiffWalk": ui.yes_no_input("Есть ли трудности при ходьбе?"),
+        "Sex": ui.sex_input("Пол (0 = женщина, 1 = мужчина)"),
+        "Age": age_bucket,
+    }
 
-# Отображение рассчитанного BMI
-st.write(f"Ваш индекс массы тела (BMI): {BMI:.2f}")
+    if st.button("Узнать результат"):
+        features = build_feature_vector(inputs)
+        probability, is_high_risk = predict_risk(model, features)
 
-# --- Ввод признаков с "Да" / "Нет" ---
+        st.write(f"Вероятность риска диабета: {probability * 100:.2f}%")
+        if is_high_risk:
+            st.error("⚠️ Повышенный риск диабета. Рекомендуется обратиться к врачу.")
+        else:
+            st.success("✅ Низкий риск диабета.")
 
-HighBP = st.selectbox("Есть ли повышенное давление?", ["Нет", "Да"])
-HighBP = 1 if HighBP == "Да" else 0
 
-HighChol = st.selectbox("Есть ли повышенный холестерин?", ["Нет", "Да"])
-HighChol = 1 if HighChol == "Да" else 0
-
-Smoker = st.selectbox("Курили ли вы более 100 сигарет за жизнь?", ["Нет", "Да"])
-Smoker = 1 if Smoker == "Да" else 0
-
-Stroke = st.selectbox("Был ли инсульт?", ["Нет", "Да"])
-Stroke = 1 if Stroke == "Да" else 0
-
-HeartDiseaseorAttack = st.selectbox("Были ли болезни сердца / инфаркт?", ["Нет", "Да"])
-HeartDiseaseorAttack = 1 if HeartDiseaseorAttack == "Да" else 0
-
-PhysActivity = st.selectbox("Была ли физическая активность за последние 30 дней?", ["Нет", "Да"])
-PhysActivity = 1 if PhysActivity == "Да" else 0
-
-Fruits = st.selectbox("Употребляете ли фрукты регулярно?", ["Нет", "Да"])
-Fruits = 1 if Fruits == "Да" else 0
-
-Veggies = st.selectbox("Употребляете ли овощи регулярно?", ["Нет", "Да"])
-Veggies = 1 if Veggies == "Да" else 0
-
-HvyAlcoholConsump = st.selectbox("Чрезмерное употребление алкоголя?", ["Нет", "Да"])
-HvyAlcoholConsump = 1 if HvyAlcoholConsump == "Да" else 0
-GenHlth = st.slider("Общее состояние здоровья (1 = отличное, 5 = плохое)", 1, 5, 3)
-MentHlth = st.slider("Дней плохого психического состояния за 30 дней", 0, 30, 0)
-PhysHlth = st.slider("Дней плохого физического состояния за 30 дней", 0, 30, 0)
-
-DiffWalk = st.selectbox("Есть ли трудности при ходьбе?", ["Нет", "Да"])
-DiffWalk = 1 if DiffWalk == "Да" else 0
-
-Sex = st.selectbox("Пол (0 = женщина, 1 = мужчина)", ["Женщина", "Мужчина"])
-Sex = 1 if Sex == "Мужчина" else 0
-
-# --- Прогноз ---
-if st.button("Узнать результат"):
-
-    # ВАЖНО: порядок признаков должен совпадать с обучением модели
-    features = np.array([[
-        HighBP,
-        HighChol,
-        BMI,
-        Smoker,
-        Stroke,
-        HeartDiseaseorAttack,
-        PhysActivity,
-        Fruits,
-        Veggies,
-        HvyAlcoholConsump,
-        GenHlth,
-        MentHlth,
-        PhysHlth,
-        DiffWalk,
-        Sex,
-        Age
-    ]])
-
-    probability = model.predict_proba(features)[0][1]
-
-    # Порог можно менять для повышения Recall
-    threshold = 0.37
-
-    st.write(f"Вероятность риска диабета: {probability * 100:.2f}%")
-
-    if probability >= threshold:
-        st.error("⚠️ Повышенный риск диабета. Рекомендуется обратиться к врачу.")
-    else:
-        st.success("✅ Низкий риск диабета.")
+if __name__ == "__main__":
+    main()
