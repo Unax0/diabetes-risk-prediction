@@ -1,20 +1,28 @@
-"""Streamlit entrypoint for the diabetes risk prediction app.
+"""Streamlit entrypoint — sidebar-driven multi-page portal.
 
 Run with:
     streamlit run app.py
-
-Heavy lifting (feature engineering, model I/O) lives in `src/`.
-This file only wires widgets to those helpers and renders the result.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import streamlit as st
 
-from src import ui
-from src.features import age_to_bucket, build_feature_vector, calculate_bmi
-from src.model import load_model, predict_risk
+from src import styles
+from src.model import load_model
+from src.pages import assessment, education, faq, home, recommendations
+
+# Page registry — keep keys in sync with any st.session_state.current_page writes.
+PAGES: dict[str, Callable[[Any], None]] = {
+    "🏠 Главная": home.render,
+    "🩺 Оценка риска": assessment.render,
+    "📚 О диабете": education.render,
+    "💡 Рекомендации": recommendations.render,
+    "❓ FAQ": faq.render,
+}
+PAGE_NAMES: list[str] = list(PAGES.keys())
+DEFAULT_PAGE: str = PAGE_NAMES[0]
 
 
 @st.cache_resource
@@ -23,51 +31,47 @@ def get_model() -> Any:
     return load_model()
 
 
+def _render_sidebar() -> str:
+    """Draw the sidebar and return the currently selected page name.
+
+    Uses only native Streamlit widgets — st.title/st.caption/st.radio/st.warning —
+    so the sidebar respects the user's Streamlit theme (light or dark) and we
+    don't need to fight Streamlit's internal CSS for contrast.
+    """
+    with st.sidebar:
+        st.title("🩺 Diabetes Portal")
+        st.caption("Прогноз и профилактика")
+        st.divider()
+
+        current = st.session_state.get("current_page", DEFAULT_PAGE)
+        selected = st.radio(
+            "Навигация",
+            PAGE_NAMES,
+            index=PAGE_NAMES.index(current) if current in PAGE_NAMES else 0,
+        )
+
+        st.divider()
+        st.warning("⚠️ Этот инструмент не заменяет консультацию врача.")
+    return selected
+
+
 def main() -> None:
+    st.set_page_config(
+        page_title="Diabetes Portal — Прогноз риска диабета",
+        page_icon="🩺",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    styles.inject()
+
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = DEFAULT_PAGE
+
+    selected = _render_sidebar()
+    st.session_state.current_page = selected
+
     model = get_model()
-
-    st.title("Опросник: Прогноз риска диабета")
-    st.subheader("Ответьте на вопросы")
-
-    age_raw = ui.age_input("Введите ваш возраст")
-    age_bucket, age_range = age_to_bucket(age_raw)
-    st.write(f"Ваш возраст попадает в диапазон: {age_range}")
-
-    height = ui.height_input("Введите ваш рост (в см)")
-    weight = ui.weight_input("Введите ваш вес (в кг)")
-    bmi = calculate_bmi(height, weight)
-    st.write(f"Ваш индекс массы тела (BMI): {bmi:.2f}")
-
-    # Order of dict insertion preserves widget render order — keep this
-    # identical to the original app.py question sequence.
-    inputs: dict[str, float] = {
-        "HighBP": ui.yes_no_input("Есть ли повышенное давление?"),
-        "HighChol": ui.yes_no_input("Есть ли повышенный холестерин?"),
-        "BMI": bmi,
-        "Smoker": ui.yes_no_input("Курили ли вы более 100 сигарет за жизнь?"),
-        "Stroke": ui.yes_no_input("Был ли инсульт?"),
-        "HeartDiseaseorAttack": ui.yes_no_input("Были ли болезни сердца / инфаркт?"),
-        "PhysActivity": ui.yes_no_input("Была ли физическая активность за последние 30 дней?"),
-        "Fruits": ui.yes_no_input("Употребляете ли фрукты регулярно?"),
-        "Veggies": ui.yes_no_input("Употребляете ли овощи регулярно?"),
-        "HvyAlcoholConsump": ui.yes_no_input("Чрезмерное употребление алкоголя?"),
-        "GenHlth": ui.gen_health_input("Общее состояние здоровья (1 = отличное, 5 = плохое)"),
-        "MentHlth": ui.days_input("Дней плохого психического состояния за 30 дней"),
-        "PhysHlth": ui.days_input("Дней плохого физического состояния за 30 дней"),
-        "DiffWalk": ui.yes_no_input("Есть ли трудности при ходьбе?"),
-        "Sex": ui.sex_input("Пол (0 = женщина, 1 = мужчина)"),
-        "Age": age_bucket,
-    }
-
-    if st.button("Узнать результат"):
-        features = build_feature_vector(inputs)
-        probability, is_high_risk = predict_risk(model, features)
-
-        st.write(f"Вероятность риска диабета: {probability * 100:.2f}%")
-        if is_high_risk:
-            st.error("⚠️ Повышенный риск диабета. Рекомендуется обратиться к врачу.")
-        else:
-            st.success("✅ Низкий риск диабета.")
+    PAGES[selected](model)
 
 
 if __name__ == "__main__":
