@@ -1,0 +1,40 @@
+# Keep the image lean: copy only what `streamlit run app.py` actually needs.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Local tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Streamlit local state
+.streamlit/secrets.toml
+
+# Docs and screenshots — not needed at runtime.
+docs/
+*.md
+LICENSE
+
+# OS noise
+.DS_Store
+Thumbs.db
